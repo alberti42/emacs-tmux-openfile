@@ -85,20 +85,30 @@
 (defvar tmux-openfile--win->frame (make-hash-table :test 'equal))
 
 (defun tmux-openfile--string-empty-p (s)
+  "Return t if S is nil or the empty string."
   (or (null s) (= (length s) 0)))
 
 (defun tmux-openfile--xdg-cache-home ()
+  "Return the XDG cache home directory with a trailing slash.
+Uses $XDG_CACHE_HOME if set, otherwise falls back to ~/.cache."
   (let ((d (or (getenv "XDG_CACHE_HOME")
                (expand-file-name "~/.cache"))))
     (file-name-as-directory (expand-file-name d))))
 
 (defun tmux-openfile--cache-dir ()
+  "Return the absolute path to the IPC file cache directory.
+Resolves to $XDG_CACHE_HOME/emacs/`tmux-openfile-cache-subdir'."
   (expand-file-name tmux-openfile-cache-subdir (tmux-openfile--xdg-cache-home)))
 
 (defun tmux-openfile--sanitize-for-filename (s)
+  "Replace characters in S that are unsafe in filenames with underscores.
+Used to turn a tmux window ID like @3 into a safe filename component."
   (replace-regexp-in-string "[^A-Za-z0-9._-]" "_" (or s "")))
 
 (defun tmux-openfile--ensure-cmdfile (window-id)
+  "Return the IPC file path for WINDOW-ID, creating it if necessary.
+The file and its parent directory are created with restrictive permissions
+(0700/0600) to prevent other local users from injecting file paths."
   (let* ((dir (tmux-openfile--cache-dir))
          (leaf (format "openfile-%s.cmd" (tmux-openfile--sanitize-for-filename window-id)))
          (path (expand-file-name leaf dir)))
@@ -134,7 +144,8 @@
              return (cons win pane))))
 
 (defun tmux-openfile--frame-tty (frame)
-  "Return tty path string for FRAME, or nil."
+  "Return the TTY device path (e.g. /dev/pts/3) for FRAME, or nil.
+Returns nil for GUI frames and for frames that are no longer live."
   (when (and frame (frame-live-p frame) (not (display-graphic-p frame)))
     (with-selected-frame frame
       (condition-case nil
@@ -168,6 +179,8 @@ SPEC supports either:
       t))))
 
 (defun tmux-openfile--read-file (path)
+  "Return the contents of PATH as a string, or nil if unreadable.
+Used by the filenotify callback to read the file-spec written by et.zsh."
   (when (and (stringp path) (file-readable-p path))
     (with-temp-buffer
       (ignore-errors (insert-file-contents path))
@@ -180,6 +193,10 @@ SPEC supports either:
            return win))
 
 (defun tmux-openfile--install-watch (window-id cmdfile)
+  "Install a filenotify watch on CMDFILE for WINDOW-ID.
+When the watch fires, reads CMDFILE and opens the file-spec it contains in
+the frame registered for WINDOW-ID.  Does nothing if a watch already exists
+for WINDOW-ID."
   (when (and (file-exists-p cmdfile)
              (not (gethash window-id tmux-openfile--win->watch)))
     (puthash
@@ -224,7 +241,9 @@ Called from `server-after-make-frame-hook', where the new frame is selected."
 
 ;;;###autoload
 (defun tmux-openfile-enable ()
-  "Enable tmux openfile registration for tty emacsclient frames." 
+  "Enable the tmux open-file bridge for tty emacsclient frames.
+Installs hooks so that every new tty frame is automatically registered
+and every closed frame is automatically deregistered."
   (interactive)
   (require 'server nil t)
   (require 'filenotify nil t)
@@ -233,7 +252,9 @@ Called from `server-after-make-frame-hook', where the new frame is selected."
 
 ;;;###autoload
 (defun tmux-openfile-disable ()
-  "Disable tmux openfile registration hook." 
+  "Disable the tmux open-file bridge.
+Removes the registration and deregistration hooks; frames already registered
+remain active until they are closed."
   (interactive)
   (remove-hook 'server-after-make-frame-hook #'tmux-openfile--register-frame)
   (remove-hook 'delete-frame-functions #'tmux-openfile--deregister-frame))
