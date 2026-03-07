@@ -7,7 +7,7 @@ usage() {
   print -u2 "       ${0:t} --list"
 }
 
-[[ -n ${TMUX-} ]] || { print -u2 "error: not inside tmux"; exit 1; }
+[[ -n ${TMUX-} ]] || { print -u2 "${0:t}: error: not inside tmux"; exit 1; }
 
 opt=${1-}
 
@@ -16,7 +16,7 @@ if [[ $opt == "--list" ]]; then
   exit 0
 fi
 
-cmdfile=$(tmux show-options -w -qv @emacs_openfile_cmdfile || true)
+cmdfile=$(tmux show-options -w -qv @emacs_openfile_cmdfile 2>/dev/null || true)
 
 if [[ $opt == "--cmdfile" ]]; then
   [[ -n $cmdfile ]] || exit 1
@@ -28,13 +28,13 @@ file=${1-}
 [[ -n $file ]] || { usage; exit 2; }
 
 [[ -n $cmdfile ]] || {
-  print -u2 "error: no @emacs_openfile_cmdfile set for this tmux window"
-  print -u2 "hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then create a tty emacsclient frame"
+  print -u2 "${0:t}: error: no @emacs_openfile_cmdfile set for this tmux window"
+  print -u2 "${0:t}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then create a tty emacsclient frame"
   exit 1
 }
 
 [[ -f $cmdfile && ! -L $cmdfile && -O $cmdfile ]] || {
-  print -u2 "error: unsafe cmdfile: $cmdfile"
+  print -u2 "${0:t}: error: unsafe cmdfile: $cmdfile"
   exit 1
 }
 
