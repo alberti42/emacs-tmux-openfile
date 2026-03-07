@@ -1,0 +1,58 @@
+name: Draft Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for git log between tags
+
+      - name: Build release assets and create draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES_FILE="release-notes/release-${TAG}.md"
+
+          # --- Release body: notes + changelog ---
+          {
+            if [[ -f "$NOTES_FILE" ]]; then
+              cat "$NOTES_FILE"
+              printf '\n\n---\n\n'
+            fi
+
+            PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+            if [[ -n "$PREV_TAG" ]]; then
+              printf '## Changes since %s\n\n' "$PREV_TAG"
+              git log --oneline "${PREV_TAG}..${TAG}" --no-merges
+            fi
+          } > release_body.md
+
+          # --- Assets ---
+          # Emacs module (can be referenced directly from straight / use-package)
+          cp tmux-openfile.el "tmux-openfile-${TAG}.el"
+
+          # zsh plugin
+          zip "et-zsh-${TAG}.zip" et.zsh
+
+          # bash plugin
+          zip "et-bash-${TAG}.zip" et.bash
+
+          # --- Draft release ---
+          gh release create "${TAG}" \
+            --draft \
+            --title "${TAG}" \
+            --notes-file release_body.md \
+            "tmux-openfile-${TAG}.el#Emacs module (tmux-openfile.el)" \
+            "et-zsh-${TAG}.zip#zsh plugin" \
+            "et-bash-${TAG}.zip#bash plugin"
