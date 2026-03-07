@@ -10,8 +10,9 @@
 ;; -----------------------------------------
 ;;
 ;;   emacsclient -t   →  server creates a TTY frame
-;;                    →  server-after-make-frame-hook fires with that frame
-;;                    →  tmux-openfile--register-frame runs
+;;                    →  server-after-make-frame-hook fires (normal hook, no args;
+;;                           new frame is selected)
+;;                    →  tmux-openfile--register-frame runs, calls (selected-frame)
 ;;                    →  tmux-openfile--frame-tty: is it a TTY? (display-graphic-p check)
 ;;                           GUI → returns nil → stops here, nothing happens
 ;;                           TTY → returns the /dev/pts/N path
@@ -170,9 +171,11 @@ SPEC supports either:
               (ignore-errors (tmux-openfile--open-spec spec)))))))
      tmux-openfile--win->watch)))
 
-(defun tmux-openfile--register-frame (frame)
-  "Register FRAME's tmux window with a command file and file watch." 
-  (let* ((tty (tmux-openfile--frame-tty frame))
+(defun tmux-openfile--register-frame ()
+  "Register the current frame's tmux window with a command file and file watch.
+Called from `server-after-make-frame-hook', where the new frame is selected."
+  (let* ((frame (selected-frame))
+         (tty (tmux-openfile--frame-tty frame))
          (win (and tty (tmux-openfile--window-id-for-tty tty))))
     (when (stringp win)
       (puthash win frame tmux-openfile--win->frame)
