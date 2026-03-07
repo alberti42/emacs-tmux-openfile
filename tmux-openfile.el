@@ -2,17 +2,22 @@
 
 ;; Overview
 ;; --------
-;; Lets shell tools ask a running Emacs server to open a file by writing a
-;; file-spec into a small per-window IPC file that Emacs watches with filenotify.
+;; Lets shell tools ask a running Emacs to open a file by writing a file-spec
+;; into a small per-window IPC file that Emacs watches with filenotify.
 ;; Requires Emacs 29+ (server-after-make-frame-hook).
 ;;
-;; Frame registration flow (emacsclient -t)
-;; -----------------------------------------
+;; Works with both session types:
+;;   - Regular Emacs (emacs -nw): the initial TTY frame is registered immediately
+;;     when `tmux-openfile-enable' is called from init.el.
+;;   - Daemon + emacsclient (emacs --daemon / emacsclient -t): each new TTY frame
+;;     is registered automatically via server-after-make-frame-hook.
+;; GUI frames are silently ignored in both cases.
 ;;
-;;   emacsclient -t   →  server creates a TTY frame
-;;                    →  server-after-make-frame-hook fires (normal hook, no args;
-;;                           new frame is selected)
-;;                    →  tmux-openfile--register-frame runs, calls (selected-frame)
+;; Frame registration flow
+;; -----------------------
+;;
+;;   Emacs TTY frame  →  tmux-openfile--register-frame runs (either immediately
+;;     appears            on enable, or via server-after-make-frame-hook)
 ;;                    →  tmux-openfile--frame-tty: is it a TTY? (display-graphic-p check)
 ;;                           GUI → returns nil → stops here, nothing happens
 ;;                           TTY → returns the /dev/pts/N path
@@ -26,17 +31,17 @@
 ;;                    →  tmux set-option -w -t @3 @emacs_openfile_paneid %5
 ;;                    →  tmux-openfile--install-watch: installs filenotify watch on that file
 ;;
-;; Frame deregistration flow (emacsclient exits)
-;; -----------------------------------------------
+;; Frame deregistration flow
+;; -------------------------
 ;;
-;;   frame deleted    →  delete-frame-functions fires with that frame
-;;                    →  tmux-openfile--deregister-frame runs
+;;   Emacs frame      →  delete-frame-functions fires with that frame
+;;     closed         →  tmux-openfile--deregister-frame runs
 ;;                    →  reverse-lookup finds the window-id for the frame
 ;;                    →  tmux set-option -w -t @3 -u @emacs_openfile_cmdfile
 ;;                    →  tmux set-option -w -t @3 -u @emacs_openfile_paneid
 ;;                    →  file-notify-rm-watch removes the IPC file watch
 ;;                    →  frame and watch entries removed from internal tables
-;;                    →  et.zsh will now report no Emacs client in this window
+;;                    →  et.zsh will now report no Emacs session in this window
 ;;
 ;; Open-file flow (et.zsh → Emacs)
 ;; --------------------------------
@@ -56,7 +61,7 @@
 ;; Usage
 ;; -----
 ;; Call `tmux-openfile-enable' once (e.g. from init.el).  Registration is then
-;; automatic for every subsequent tty emacsclient frame.
+;; automatic for every subsequent tty frame.
 ;; Call `tmux-openfile-disable' to stop registering new frames.
 
 (require 'cl-lib)
@@ -214,7 +219,7 @@ for WINDOW-ID."
 
 (defun tmux-openfile--deregister-frame (frame)
   "Unset tmux window variables and remove the file watch for FRAME.
-Called from `delete-frame-functions' when an emacsclient frame is closed."
+Called from `delete-frame-functions' when an Emacs frame is closed."
   (let ((win (tmux-openfile--win-for-frame frame)))
     (when win
       (tmux-openfile--tmux "set-option" "-w" "-t" win "-u" tmux-openfile-tmux-option)
@@ -226,7 +231,8 @@ Called from `delete-frame-functions' when an emacsclient frame is closed."
 
 (defun tmux-openfile--register-frame ()
   "Register the current frame's tmux window with a command file and file watch.
-Called from `server-after-make-frame-hook', where the new frame is selected."
+Called from `server-after-make-frame-hook' for daemon sessions, or directly
+from `tmux-openfile-enable' for regular sessions."
   (let* ((frame (selected-frame))
          (tty (tmux-openfile--frame-tty frame))
          (loc (and tty (tmux-openfile--lookup-tty tty)))
@@ -241,14 +247,18 @@ Called from `server-after-make-frame-hook', where the new frame is selected."
 
 ;;;###autoload
 (defun tmux-openfile-enable ()
-  "Enable the tmux open-file bridge for tty emacsclient frames.
-Installs hooks so that every new tty frame is automatically registered
-and every closed frame is automatically deregistered."
+  "Enable the tmux open-file bridge for tty Emacs frames.
+Registers the current frame immediately (for regular non-daemon sessions),
+and installs hooks so that every subsequent tty frame is automatically
+registered and every closed frame is automatically deregistered."
   (interactive)
   (require 'server nil t)
   (require 'filenotify nil t)
   (add-hook 'server-after-make-frame-hook #'tmux-openfile--register-frame)
-  (add-hook 'delete-frame-functions #'tmux-openfile--deregister-frame))
+  (add-hook 'delete-frame-functions #'tmux-openfile--deregister-frame)
+  ;; Register the initial frame for regular (non-daemon) Emacs sessions.
+  ;; In daemon mode this is a no-op: no TTY frame exists yet at startup.
+  (tmux-openfile--register-frame))
 
 ;;;###autoload
 (defun tmux-openfile-disable ()

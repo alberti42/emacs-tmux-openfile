@@ -39,7 +39,7 @@ file=${1-}
 
 [[ -n $cmdfile ]] || {
   printf '%s\n' "${0##*/}: error: no @emacs_openfile_cmdfile set for this tmux window" >&2
-  printf '%s\n' "${0##*/}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then create a tty emacsclient frame" >&2
+  printf '%s\n' "${0##*/}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window" >&2
   exit 1
 }
 
