@@ -2,15 +2,18 @@
 
 # emacs-tmux-openfile — open a file in a running Emacs from within tmux.
 #
-# Usable as a bash plugin function (sourced via emacs-tmux-openfile.plugin.bash)
-# or executed directly as a script.
+# Defines __emacs-tmux-openfile.et, the real implementation of the et command.
+# Sourced by emacs-tmux-openfile.plugin.bash on first call; also executable
+# directly as a script.
 #
 # Note: set -euo pipefail is intentionally omitted from the function body.
 # In bash, unlike zsh, shell options set inside a function affect the whole
 # session. Errors are handled explicitly instead.
 
-et() {
-  [[ -n ${TMUX-} ]] || { printf '%s\n' "${FUNCNAME[0]}: error: not inside tmux" >&2; return 1; }
+__emacs-tmux-openfile.et() {
+  local cmd=$1; shift
+
+  [[ -n ${TMUX-} ]] || { printf '%s\n' "${cmd}: error: not inside tmux" >&2; return 1; }
 
   local keep_focus=0
   local opt=${1-}
@@ -38,22 +41,22 @@ et() {
 
   local file=${1-}
   if [[ -z $file ]]; then
-    printf '%s\n' "usage: ${FUNCNAME[0]} [-k] FILE" >&2
-    printf '%s\n' "       ${FUNCNAME[0]} --cmdfile" >&2
-    printf '%s\n' "       ${FUNCNAME[0]} --list" >&2
+    printf '%s\n' "usage: ${cmd} [-k] FILE" >&2
+    printf '%s\n' "       ${cmd} --cmdfile" >&2
+    printf '%s\n' "       ${cmd} --list" >&2
     printf '%s\n' "options:" >&2
     printf '%s\n' "  -k, --keep-focus  do not move focus to the Emacs pane after opening" >&2
     return 2
   fi
 
   [[ -n $cmdfile ]] || {
-    printf '%s\n' "${FUNCNAME[0]}: error: no @emacs_openfile_cmdfile set for this tmux window" >&2
-    printf '%s\n' "${FUNCNAME[0]}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window" >&2
+    printf '%s\n' "${cmd}: error: no @emacs_openfile_cmdfile set for this tmux window" >&2
+    printf '%s\n' "${cmd}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window" >&2
     return 1
   }
 
   [[ -f $cmdfile && ! -L $cmdfile && -O $cmdfile ]] || {
-    printf '%s\n' "${FUNCNAME[0]}: error: unsafe cmdfile: $cmdfile" >&2
+    printf '%s\n' "${cmd}: error: unsafe cmdfile: $cmdfile" >&2
     return 1
   }
 
@@ -69,4 +72,4 @@ et() {
 }
 
 # Allow direct execution as a script (not sourced as a plugin).
-[[ "${BASH_SOURCE[0]}" != "$0" ]] || et "$@"
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || __emacs-tmux-openfile.et "${0##*/}" "$@"

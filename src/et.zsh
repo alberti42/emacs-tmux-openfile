@@ -2,14 +2,17 @@
 
 # emacs-tmux-openfile — open a file in a running Emacs from within tmux.
 #
-# Usable as a zsh plugin function (sourced via emacs-tmux-openfile.plugin.zsh)
-# or executed directly as a script.
+# Defines __emacs-tmux-openfile.et, the real implementation of the et command.
+# Sourced by emacs-tmux-openfile.plugin.zsh on first call; also executable
+# directly as a script.
 
-function et() {
+function __emacs-tmux-openfile.et() {
   emulate -LR zsh
   setopt errexit nounset pipefail
 
-  [[ -n ${TMUX-} ]] || { print -u2 "${0}: error: not inside tmux"; return 1; }
+  local cmd=$1; shift
+
+  [[ -n ${TMUX-} ]] || { print -u2 "${cmd}: error: not inside tmux"; return 1; }
 
   local keep_focus=0
   local opt=${1-}
@@ -37,22 +40,22 @@ function et() {
 
   local file=${1-}
   if [[ -z $file ]]; then
-    print -u2 "usage: ${0} [-k] FILE"
-    print -u2 "       ${0} --cmdfile"
-    print -u2 "       ${0} --list"
+    print -u2 "usage: ${cmd} [-k] FILE"
+    print -u2 "       ${cmd} --cmdfile"
+    print -u2 "       ${cmd} --list"
     print -u2 "options:"
     print -u2 "  -k, --keep-focus  do not move focus to the Emacs pane after opening"
     return 2
   fi
 
   [[ -n $cmdfile ]] || {
-    print -u2 "${0}: error: no @emacs_openfile_cmdfile set for this tmux window"
-    print -u2 "${0}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window"
+    print -u2 "${cmd}: error: no @emacs_openfile_cmdfile set for this tmux window"
+    print -u2 "${cmd}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window"
     return 1
   }
 
   [[ -f $cmdfile && ! -L $cmdfile && -O $cmdfile ]] || {
-    print -u2 "${0}: error: unsafe cmdfile: $cmdfile"
+    print -u2 "${cmd}: error: unsafe cmdfile: $cmdfile"
     return 1
   }
 
@@ -68,4 +71,4 @@ function et() {
 }
 
 # Allow direct execution as a script (not sourced as a plugin).
-[[ "$ZSH_EVAL_CONTEXT" == *:file* ]] || et "$@"
+[[ "$ZSH_EVAL_CONTEXT" == *:file* ]] || __emacs-tmux-openfile.et "${0:t}" "$@"

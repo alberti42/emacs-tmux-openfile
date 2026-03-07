@@ -1,12 +1,23 @@
 #!/hint/bash
 
-# Bootstrap loader for the 'et' function.
-# On first call, sources the real implementation from src/et.bash,
-# which overwrites this stub, then forwards the call.
-
-et() {
+# Private bootstrap stub — sources the real implementation on first call,
+# which redefines __emacs-tmux-openfile.et, then forwards the call.
+__emacs-tmux-openfile.et() {
   local plugin_dir
   plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   source "${plugin_dir}/src/et.bash"
-  et "$@"
+  __emacs-tmux-openfile.et "$@"
 }
+
+# Public wrapper under the user-configured name (default: et).
+# ETO_CMD_NAME is read at source time and baked into the wrapper body,
+# so the name is resolved once and never read again at call time.
+_eto_cmd="${ETO_CMD_NAME:-et}"
+eval "
+${_eto_cmd}() {
+  __emacs-tmux-openfile.et \"${_eto_cmd}\" \"\$@\"
+  local rc=\$?
+  return \$rc
+}
+"
+unset _eto_cmd
