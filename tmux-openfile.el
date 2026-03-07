@@ -13,6 +13,16 @@
 ;;     is registered automatically via server-after-make-frame-hook.
 ;; GUI frames are silently ignored in both cases.
 ;;
+;; Multiple Emacs sessions in the same tmux window are supported via a session
+;; list stored in @emacs_openfile_stack.  Each session owns its own IPC file.
+;; The first-registered session (leftmost entry) is always the active one;
+;; later sessions are standby and take over only when the active session closes.
+;; et.zsh reads @emacs_openfile_stack directly and parses the leftmost entry
+;; to find the active cmdfile and pane ID.
+;;
+;; Internal state is keyed by pane-id, which is unique per session even when
+;; multiple sessions share the same tmux window.
+;;
 ;; Frame registration flow
 ;; -----------------------
 ;;
@@ -25,10 +35,10 @@
 ;;                           to find which window/pane owns that /dev/pts/N
 ;;                           not in tmux → returns nil → stops here
 ;;                           in tmux → returns (window_id . pane_id) e.g. (@3 . %5)
-;;                    →  tmux-openfile--ensure-cmdfile: creates the IPC file
-;;                           at $XDG_CACHE_HOME/emacs/tmux-openfile/openfile-@3.cmd
-;;                    →  tmux set-option -w -t @3 @emacs_openfile_cmdfile <path>
-;;                    →  tmux set-option -w -t @3 @emacs_openfile_paneid %5
+;;                    →  guard: pane already registered? → stop (idempotent)
+;;                    →  tmux-openfile--make-cmdfile: creates the IPC file
+;;                           at $XDG_CACHE_HOME/emacs/tmux-openfile/openfile-<win>-<pane>.cmd
+;;                    →  append cmdfile path to @emacs_openfile_stack
 ;;                    →  tmux-openfile--install-watch: installs filenotify watch on that file
 ;;
 ;; Frame deregistration flow
@@ -36,17 +46,18 @@
 ;;
 ;;   Emacs frame      →  delete-frame-functions fires with that frame
 ;;     closed         →  tmux-openfile--deregister-frame runs
-;;                    →  reverse-lookup finds the window-id for the frame
-;;                    →  tmux set-option -w -t @3 -u @emacs_openfile_cmdfile
-;;                    →  tmux set-option -w -t @3 -u @emacs_openfile_paneid
+;;                    →  reverse-lookup finds the pane-id for the frame
+;;                    →  removes own cmdfile path from @emacs_openfile_stack
+;;                           (stack-write unsets the option if the list becomes empty)
 ;;                    →  file-notify-rm-watch removes the IPC file watch
-;;                    →  frame and watch entries removed from internal tables
-;;                    →  et.zsh will now report no Emacs session in this window
+;;                    →  cmdfile deleted from disk
+;;                    →  frame, session, and watch entries removed from internal tables
+;;                    →  et.zsh will now use the previous session, or report none
 ;;
 ;; Open-file flow (et.zsh → Emacs)
 ;; --------------------------------
 ;;
-;;   et.zsh FILE      →  reads @emacs_openfile_cmdfile from the current tmux window
+;;   et.zsh FILE      →  reads @emacs_openfile_stack and parses the leftmost entry
 ;;                    →  writes FILE into the IPC file in-place (no atomic rename,
 ;;                           so the inode stays stable and the watch keeps working)
 ;;                    →  filenotify callback fires in Emacs
@@ -70,24 +81,28 @@
   "Open files in Emacs via tmux window metadata."
   :group 'external)
 
-(defcustom tmux-openfile-tmux-option "@emacs_openfile_cmdfile"
-  "tmux window user option that stores the command file path."
-  :type 'string)
-
-(defcustom tmux-openfile-pane-option "@emacs_openfile_paneid"
-  "tmux window user option that stores the Emacs pane ID."
-  :type 'string)
-
-(defcustom tmux-openfile-cache-subdir "tmux-emacs-openfile"
-  "Subdirectory under XDG cache for command files."
+(defcustom tmux-openfile-cache-subdir "tmux-openfile"
+  "Subdirectory under $XDG_CACHE_HOME/emacs/ for IPC command files."
   :type 'string)
 
 (defcustom tmux-openfile-watch-events '(change)
   "Events passed to `file-notify-add-watch'."
   :type '(repeat symbol))
 
-(defvar tmux-openfile--win->watch (make-hash-table :test 'equal))
-(defvar tmux-openfile--win->frame (make-hash-table :test 'equal))
+(defcustom tmux-openfile-stack-option "@emacs_openfile_stack"
+  "tmux window user option that stores the ordered session list (leftmost = active)."
+  :type 'string)
+
+;; All three tables are keyed by pane-id (e.g. "%5"), which is unique per
+;; session even when multiple sessions share the same tmux window.
+(defvar tmux-openfile--pane->frame (make-hash-table :test 'equal)
+  "Hash table: pane-id → frame for this Emacs process.")
+
+(defvar tmux-openfile--pane->session (make-hash-table :test 'equal)
+  "Hash table: pane-id → (win . cmdfile) for this Emacs process's session.")
+
+(defvar tmux-openfile--pane->watch (make-hash-table :test 'equal)
+  "Hash table: pane-id → filenotify watch descriptor for this process's cmdfile.")
 
 (defun tmux-openfile--string-empty-p (s)
   "Return t if S is nil or the empty string."
@@ -103,19 +118,15 @@ Uses $XDG_CACHE_HOME if set, otherwise falls back to ~/.cache."
 (defun tmux-openfile--cache-dir ()
   "Return the absolute path to the IPC file cache directory.
 Resolves to $XDG_CACHE_HOME/emacs/`tmux-openfile-cache-subdir'."
-  (expand-file-name tmux-openfile-cache-subdir (tmux-openfile--xdg-cache-home)))
+  (expand-file-name tmux-openfile-cache-subdir
+                    (expand-file-name "emacs" (tmux-openfile--xdg-cache-home))))
 
-(defun tmux-openfile--sanitize-for-filename (s)
-  "Replace characters in S that are unsafe in filenames with underscores.
-Used to turn a tmux window ID like @3 into a safe filename component."
-  (replace-regexp-in-string "[^A-Za-z0-9._-]" "_" (or s "")))
-
-(defun tmux-openfile--ensure-cmdfile (window-id)
-  "Return the IPC file path for WINDOW-ID, creating it if necessary.
-The file and its parent directory are created with restrictive permissions
-(0700/0600) to prevent other local users from injecting file paths."
+(defun tmux-openfile--make-cmdfile (window-id pane-id)
+  "Return the IPC file path for WINDOW-ID and PANE-ID, creating it if necessary.
+Named openfile-<window_id>-<pane_id>.cmd (e.g. openfile-@3-%5.cmd).
+The file and its parent directory are created with 0700/0600 permissions."
   (let* ((dir (tmux-openfile--cache-dir))
-         (leaf (format "openfile-%s.cmd" (tmux-openfile--sanitize-for-filename window-id)))
+         (leaf (format "openfile-%s-%s.cmd" window-id pane-id))
          (path (expand-file-name leaf dir)))
     (unless (file-directory-p dir)
       (make-directory dir t)
@@ -135,6 +146,25 @@ The file and its parent directory are created with restrictive permissions
       (let ((rc (apply #'call-process tmux-openfile--executable nil t nil args)))
         (when (and (numberp rc) (zerop rc))
           (buffer-string))))))
+
+(defun tmux-openfile--stack-read (win)
+  "Return the session stack for tmux window WIN as a list of strings.
+Each entry is a cmdfile path; leftmost is the active session.  Returns nil if unset."
+  (let ((raw (tmux-openfile--tmux "show-options" "-w" "-qv" "-t" win
+                                  tmux-openfile-stack-option)))
+    (if (or (null raw) (string-empty-p (string-trim raw)))
+        nil
+      (split-string (string-trim raw) "\x1f" t))))
+
+(defun tmux-openfile--stack-write (win entries)
+  "Write ENTRIES (list of strings) back to the stack tmux option for WIN.
+Unsets the option if ENTRIES is empty."
+  (if entries
+      (tmux-openfile--tmux "set-option" "-w" "-t" win
+                           tmux-openfile-stack-option
+                           (mapconcat #'identity entries "\x1f"))
+    (tmux-openfile--tmux "set-option" "-w" "-t" win "-u"
+                         tmux-openfile-stack-option)))
 
 (defun tmux-openfile--lookup-tty (tty)
   "Return a cons (WINDOW-ID . PANE-ID) for the tmux pane whose tty equals TTY, or nil."
@@ -191,59 +221,87 @@ Used by the filenotify callback to read the file-spec written by et.zsh."
       (ignore-errors (insert-file-contents path))
       (buffer-string))))
 
-(defun tmux-openfile--win-for-frame (frame)
-  "Return the tmux window-id registered for FRAME, or nil."
-  (cl-loop for win being the hash-keys of tmux-openfile--win->frame
-           when (eq (gethash win tmux-openfile--win->frame) frame)
-           return win))
+(defun tmux-openfile--pane-for-frame (frame)
+  "Return the tmux pane-id registered for FRAME, or nil."
+  (cl-loop for pane being the hash-keys of tmux-openfile--pane->frame
+           when (eq (gethash pane tmux-openfile--pane->frame) frame)
+           return pane))
 
-(defun tmux-openfile--install-watch (window-id cmdfile)
-  "Install a filenotify watch on CMDFILE for WINDOW-ID.
+(defun tmux-openfile--install-watch (pane cmdfile)
+  "Install a filenotify watch on CMDFILE for PANE.
 When the watch fires, reads CMDFILE and opens the file-spec it contains in
-the frame registered for WINDOW-ID.  Does nothing if a watch already exists
-for WINDOW-ID."
+the frame registered for PANE.  Does nothing if a watch already exists
+for PANE."
   (when (and (file-exists-p cmdfile)
-             (not (gethash window-id tmux-openfile--win->watch)))
+             (not (gethash pane tmux-openfile--pane->watch)))
     (puthash
-     window-id
+     pane
      (file-notify-add-watch
       cmdfile
       tmux-openfile-watch-events
       (lambda (_event)
-        (let* ((frame (gethash window-id tmux-openfile--win->frame))
+        (let* ((frame (gethash pane tmux-openfile--pane->frame))
                (spec (tmux-openfile--read-file cmdfile)))
           (when (and frame (frame-live-p frame) (stringp spec))
             (with-selected-frame frame
               (ignore-errors (tmux-openfile--open-spec spec)))))))
-     tmux-openfile--win->watch)))
+     tmux-openfile--pane->watch)))
+
+(defun tmux-openfile--deregister-all ()
+  "Deregister all sessions owned by this Emacs process.
+Called from `kill-emacs-hook' so that stack entries are cleaned up even
+when Emacs terminates without deleting individual frames first."
+  (maphash
+   (lambda (pane session)
+     (let* ((win (car session))
+            (cmdfile (cdr session))
+            (stack (tmux-openfile--stack-read win))
+            (new-stack (cl-remove cmdfile stack :test #'string=)))
+       (tmux-openfile--stack-write win new-stack)
+       (when-let ((watch (gethash pane tmux-openfile--pane->watch)))
+         (file-notify-rm-watch watch))
+       (ignore-errors (delete-file cmdfile))))
+   tmux-openfile--pane->session)
+  (clrhash tmux-openfile--pane->frame)
+  (clrhash tmux-openfile--pane->session)
+  (clrhash tmux-openfile--pane->watch))
 
 (defun tmux-openfile--deregister-frame (frame)
-  "Unset tmux window variables and remove the file watch for FRAME.
+  "Remove this session from the ordered session list and clean up.
 Called from `delete-frame-functions' when an Emacs frame is closed."
-  (let ((win (tmux-openfile--win-for-frame frame)))
-    (when win
-      (tmux-openfile--tmux "set-option" "-w" "-t" win "-u" tmux-openfile-tmux-option)
-      (tmux-openfile--tmux "set-option" "-w" "-t" win "-u" tmux-openfile-pane-option)
-      (when-let ((watch (gethash win tmux-openfile--win->watch)))
-        (file-notify-rm-watch watch))
-      (remhash win tmux-openfile--win->watch)
-      (remhash win tmux-openfile--win->frame))))
+  (let ((pane (tmux-openfile--pane-for-frame frame)))
+    (when pane
+      (let* ((session (gethash pane tmux-openfile--pane->session))
+             (win (car session))
+             (cmdfile (cdr session))
+             (stack (tmux-openfile--stack-read win))
+             (new-stack (cl-remove cmdfile stack :test #'string=)))
+        (tmux-openfile--stack-write win new-stack)
+        (when-let ((watch (gethash pane tmux-openfile--pane->watch)))
+          (file-notify-rm-watch watch))
+        (ignore-errors (delete-file cmdfile))
+        (remhash pane tmux-openfile--pane->watch)
+        (remhash pane tmux-openfile--pane->frame)
+        (remhash pane tmux-openfile--pane->session)))))
 
 (defun tmux-openfile--register-frame ()
-  "Register the current frame's tmux window with a command file and file watch.
+  "Register the current frame's tmux pane with a command file and file watch.
 Called from `server-after-make-frame-hook' for daemon sessions, or directly
-from `tmux-openfile-enable' for regular sessions."
+from `tmux-openfile-enable' for regular sessions.  Idempotent: does nothing
+if this pane is already registered."
   (let* ((frame (selected-frame))
          (tty (tmux-openfile--frame-tty frame))
          (loc (and tty (tmux-openfile--lookup-tty tty)))
          (win (car loc))
          (pane (cdr loc)))
-    (when (stringp win)
-      (puthash win frame tmux-openfile--win->frame)
-      (let ((cmdfile (tmux-openfile--ensure-cmdfile win)))
-        (tmux-openfile--tmux "set-option" "-w" "-t" win tmux-openfile-tmux-option cmdfile)
-        (tmux-openfile--tmux "set-option" "-w" "-t" win tmux-openfile-pane-option pane)
-        (tmux-openfile--install-watch win cmdfile)))))
+    (when (and (stringp win)
+               (not (gethash pane tmux-openfile--pane->frame)))
+      (let* ((cmdfile (tmux-openfile--make-cmdfile win pane))
+             (stack (tmux-openfile--stack-read win)))
+        (tmux-openfile--stack-write win (append stack (list cmdfile)))
+        (tmux-openfile--install-watch pane cmdfile)
+        (puthash pane frame tmux-openfile--pane->frame)
+        (puthash pane (cons win cmdfile) tmux-openfile--pane->session)))))
 
 ;;;###autoload
 (defun tmux-openfile-enable ()
@@ -256,6 +314,7 @@ registered and every closed frame is automatically deregistered."
   (require 'filenotify nil t)
   (add-hook 'server-after-make-frame-hook #'tmux-openfile--register-frame)
   (add-hook 'delete-frame-functions #'tmux-openfile--deregister-frame)
+  (add-hook 'kill-emacs-hook #'tmux-openfile--deregister-all)
   ;; Register the initial frame for regular (non-daemon) Emacs sessions.
   ;; In daemon mode this is a no-op: no TTY frame exists yet at startup.
   (tmux-openfile--register-frame))
@@ -267,7 +326,8 @@ Removes the registration and deregistration hooks; frames already registered
 remain active until they are closed."
   (interactive)
   (remove-hook 'server-after-make-frame-hook #'tmux-openfile--register-frame)
-  (remove-hook 'delete-frame-functions #'tmux-openfile--deregister-frame))
+  (remove-hook 'delete-frame-functions #'tmux-openfile--deregister-frame)
+  (remove-hook 'kill-emacs-hook #'tmux-openfile--deregister-all))
 
 (provide 'tmux-openfile)
 

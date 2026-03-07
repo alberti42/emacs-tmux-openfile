@@ -45,8 +45,11 @@ __emacs-tmux-openfile.et() {
     return 0
   fi
 
-  local cmdfile
-  cmdfile=$(command tmux show-options -w -qv @emacs_openfile_cmdfile 2>/dev/null || true)
+  local stack
+  stack=$(command tmux show-options -w -qv @emacs_openfile_stack 2>/dev/null || true)
+  local cmdfile="${stack%%$'\x1f'*}"
+  local stem="${cmdfile##*/}"; stem="${stem%.cmd}"
+  local paneid="${stem##*-}"
 
   if [[ $opt == "--cmdfile" ]]; then
     [[ -n $cmdfile ]] || return 1
@@ -61,8 +64,8 @@ __emacs-tmux-openfile.et() {
   fi
 
   [[ -n $cmdfile ]] || {
-    printf '%s\n' "${cmd}: error: no @emacs_openfile_cmdfile set for this tmux window" >&2
-    printf '%s\n' "${cmd}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then start Emacs in a tty inside this tmux window" >&2
+    printf '%s\n' "${cmd}: error: no Emacs session registered in this tmux window" >&2
+    printf '%s\n' "${cmd}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable" >&2
     return 1
   }
 
@@ -81,13 +84,19 @@ __emacs-tmux-openfile.et() {
     return 1
   }
 
+  local active_cmd
+  active_cmd=$(command tmux display-message -t "$paneid" -p '#{pane_current_command}' 2>/dev/null || true)
+  [[ $active_cmd == emacs* ]] || {
+    printf '%s\n' "${cmd}: error: pane $paneid is no longer running Emacs (found: ${active_cmd:-nothing})" >&2
+    printf '%s\n' "${cmd}: hint: run '${cmd} --list' to see all panes in this tmux window" >&2
+    return 1
+  }
+
   # In-place update (no temp+rename) so Emacs file-notify watches keep working.
   printf '%s\n' "$file" >| "$cmdfile"
 
   # Move focus to the Emacs pane (unless --keep-focus was given).
   if [[ $keep_focus -eq 0 ]]; then
-    local paneid
-    paneid=$(command tmux show-options -w -qv @emacs_openfile_paneid 2>/dev/null || true)
     [[ -n $paneid ]] && command tmux select-pane -t "$paneid"
   fi
 }
