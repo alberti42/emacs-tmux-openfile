@@ -2,12 +2,22 @@
 set -euo pipefail
 
 usage() {
-  print -u2 "usage: ${0:t} FILE"
+  print -u2 "usage: ${0:t} [-k] FILE"
   print -u2 "       ${0:t} --cmdfile"
   print -u2 "       ${0:t} --list"
+  print -u2 "options:"
+  print -u2 "  -k, --keep-focus  do not move focus to the Emacs pane after opening"
 }
 
 [[ -n ${TMUX-} ]] || { print -u2 "${0:t}: error: not inside tmux"; exit 1; }
+
+keep_focus=0
+opt=${1-}
+
+if [[ $opt == "-k" || $opt == "--keep-focus" ]]; then
+  keep_focus=1
+  shift
+fi
 
 opt=${1-}
 
@@ -41,6 +51,8 @@ file=${1-}
 # In-place update (no temp+rename) so Emacs file-notify watches keep working.
 print -r -- "$file" >| "$cmdfile"
 
-# Move focus to the Emacs pane.
-paneid=$(tmux show-options -w -qv @emacs_openfile_paneid || true)
-[[ -n $paneid ]] && tmux select-pane -t "$paneid"
+# Move focus to the Emacs pane (unless --keep-focus was given).
+if [[ $keep_focus -eq 0 ]]; then
+  paneid=$(tmux show-options -w -qv @emacs_openfile_paneid 2>/dev/null || true)
+  [[ -n $paneid ]] && tmux select-pane -t "$paneid"
+fi
