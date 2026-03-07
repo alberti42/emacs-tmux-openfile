@@ -40,17 +40,20 @@ Works with both session types:
 
 ### 1. Install the Emacs module
 
-Copy `tmux-openfile.el` somewhere on your `load-path`, then add to your
-`init.el`:
+#### Option A — Manual
+
+Download `emacs-tmux-openfile-<tag>.zip` from the
+[latest release](https://github.com/alberti42/emacs-tmux-openfile/releases/latest),
+extract `tmux-openfile.el`, and place it somewhere on your `load-path`. Then
+add to your `init.el`:
 
 ```elisp
-;; Requires Emacs 29+ for server-after-make-frame-hook.
 (when (>= emacs-major-version 29)
   (require 'tmux-openfile)
   (tmux-openfile-enable))
 ```
 
-If you use `straight.el`:
+#### Option B — straight.el
 
 ```elisp
 (when (>= emacs-major-version 29)
@@ -62,6 +65,9 @@ If you use `straight.el`:
     :config
     (tmux-openfile-enable)))
 ```
+
+This clones the repository directly and tracks the main branch. To pin to a
+specific release, run `M-x straight-freeze-versions` after installation.
 
 ### 2. Install the shell helper
 
