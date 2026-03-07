@@ -10,6 +10,16 @@
 # In bash, unlike zsh, shell options set inside a function affect the whole
 # session. Errors are handled explicitly instead.
 
+__emacs-tmux-openfile._usage() {
+  local cmd=$1 fd=$2
+  printf '%s\n' "usage: ${cmd} [-k] FILE" >&$fd
+  printf '%s\n' "       ${cmd} --cmdfile" >&$fd
+  printf '%s\n' "       ${cmd} --list" >&$fd
+  printf '%s\n' "options:" >&$fd
+  printf '%s\n' "  -k, --keep-focus  do not move focus to the Emacs pane after opening" >&$fd
+  printf '%s\n' "  -h, --help        show this help message" >&$fd
+}
+
 __emacs-tmux-openfile.et() {
   local cmd=$1; shift
 
@@ -24,6 +34,11 @@ __emacs-tmux-openfile.et() {
   fi
 
   opt=${1-}
+
+  if [[ $opt == "-h" || $opt == "--help" ]]; then
+    __emacs-tmux-openfile._usage "$cmd" 1
+    return 0
+  fi
 
   if [[ $opt == "--list" ]]; then
     command tmux list-panes -F $'#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_tty}'
@@ -41,11 +56,7 @@ __emacs-tmux-openfile.et() {
 
   local file=${1-}
   if [[ -z $file ]]; then
-    printf '%s\n' "usage: ${cmd} [-k] FILE" >&2
-    printf '%s\n' "       ${cmd} --cmdfile" >&2
-    printf '%s\n' "       ${cmd} --list" >&2
-    printf '%s\n' "options:" >&2
-    printf '%s\n' "  -k, --keep-focus  do not move focus to the Emacs pane after opening" >&2
+    __emacs-tmux-openfile._usage "$cmd" 2
     return 2
   fi
 

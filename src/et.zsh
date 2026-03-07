@@ -6,6 +6,16 @@
 # Sourced by emacs-tmux-openfile.plugin.zsh on first call; also executable
 # directly as a script.
 
+function __emacs-tmux-openfile._usage() {
+  local cmd=$1 fd=$2
+  print -u $fd -r -- "usage: ${cmd} [-k] FILE"
+  print -u $fd -r -- "       ${cmd} --cmdfile"
+  print -u $fd -r -- "       ${cmd} --list"
+  print -u $fd -r -- "options:"
+  print -u $fd -r -- "  -k, --keep-focus  do not move focus to the Emacs pane after opening"
+  print -u $fd -r -- "  -h, --help        show this help message"
+}
+
 function __emacs-tmux-openfile.et() {
   builtin emulate -LR zsh -o warn_create_global -o pipe_fail -o no_unset
   # Note: errexit (ERR_EXIT) is intentionally omitted. In zsh, ERR_EXIT exits
@@ -26,6 +36,11 @@ function __emacs-tmux-openfile.et() {
 
   opt=${1-}
 
+  if [[ $opt == "-h" || $opt == "--help" ]]; then
+    __emacs-tmux-openfile._usage "$cmd" 1
+    return 0
+  fi
+
   if [[ $opt == "--list" ]]; then
     command tmux list-panes -F $'#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_tty}'
     return 0
@@ -41,11 +56,7 @@ function __emacs-tmux-openfile.et() {
 
   local file=${1-}
   if [[ -z $file ]]; then
-    print -u2 "usage: ${cmd} [-k] FILE"
-    print -u2 "       ${cmd} --cmdfile"
-    print -u2 "       ${cmd} --list"
-    print -u2 "options:"
-    print -u2 "  -k, --keep-focus  do not move focus to the Emacs pane after opening"
+    __emacs-tmux-openfile._usage "$cmd" 2
     return 2
   fi
 
