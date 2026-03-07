@@ -16,13 +16,14 @@
 ;;                    →  tmux-openfile--frame-tty: is it a TTY? (display-graphic-p check)
 ;;                           GUI → returns nil → stops here, nothing happens
 ;;                           TTY → returns the /dev/pts/N path
-;;                    →  tmux-openfile--window-id-for-tty: runs `tmux list-panes -a'
-;;                           to find which window owns that /dev/pts/N
+;;                    →  tmux-openfile--lookup-tty: runs `tmux list-panes -a'
+;;                           to find which window/pane owns that /dev/pts/N
 ;;                           not in tmux → returns nil → stops here
-;;                           in tmux → returns window_id (e.g. @3)
+;;                           in tmux → returns (window_id . pane_id) e.g. (@3 . %5)
 ;;                    →  tmux-openfile--ensure-cmdfile: creates the IPC file
 ;;                           at $XDG_CACHE_HOME/emacs/tmux-openfile/openfile-@3.cmd
 ;;                    →  tmux set-option -w -t @3 @emacs_openfile_cmdfile <path>
+;;                    →  tmux set-option -w -t @3 @emacs_openfile_paneid %5
 ;;                    →  tmux-openfile--install-watch: installs filenotify watch on that file
 ;;
 ;; Open-file flow (et.zsh → Emacs)
@@ -54,6 +55,10 @@
 
 (defcustom tmux-openfile-tmux-option "@emacs_openfile_cmdfile"
   "tmux window user option that stores the command file path."
+  :type 'string)
+
+(defcustom tmux-openfile-pane-option "@emacs_openfile_paneid"
+  "tmux window user option that stores the Emacs pane ID."
   :type 'string)
 
 (defcustom tmux-openfile-cache-subdir "tmux-emacs-openfile"
@@ -104,16 +109,17 @@
         (when (and (numberp rc) (zerop rc))
           (buffer-string))))))
 
-(defun tmux-openfile--window-id-for-tty (tty)
-  "Return tmux window_id whose pane_tty equals TTY (string), or nil."
-  (let* ((out (tmux-openfile--tmux "list-panes" "-a" "-F" "#{pane_tty}\t#{window_id}"))
+(defun tmux-openfile--lookup-tty (tty)
+  "Return a cons (WINDOW-ID . PANE-ID) for the tmux pane whose tty equals TTY, or nil."
+  (let* ((out (tmux-openfile--tmux "list-panes" "-a" "-F" "#{pane_tty}\t#{window_id}\t#{pane_id}"))
          (lines (and out (split-string out "\n" t))))
     (cl-loop for line in lines
              for parts = (split-string line "\t")
              for ptty = (nth 0 parts)
              for win = (nth 1 parts)
-             when (and ptty win (string= ptty tty))
-             return win)))
+             for pane = (nth 2 parts)
+             when (and ptty win pane (string= ptty tty))
+             return (cons win pane))))
 
 (defun tmux-openfile--frame-tty (frame)
   "Return tty path string for FRAME, or nil."
@@ -176,11 +182,14 @@ SPEC supports either:
 Called from `server-after-make-frame-hook', where the new frame is selected."
   (let* ((frame (selected-frame))
          (tty (tmux-openfile--frame-tty frame))
-         (win (and tty (tmux-openfile--window-id-for-tty tty))))
+         (loc (and tty (tmux-openfile--lookup-tty tty)))
+         (win (car loc))
+         (pane (cdr loc)))
     (when (stringp win)
       (puthash win frame tmux-openfile--win->frame)
       (let ((cmdfile (tmux-openfile--ensure-cmdfile win)))
         (tmux-openfile--tmux "set-option" "-w" "-t" win tmux-openfile-tmux-option cmdfile)
+        (tmux-openfile--tmux "set-option" "-w" "-t" win tmux-openfile-pane-option pane)
         (tmux-openfile--install-watch win cmdfile)))))
 
 ;;;###autoload

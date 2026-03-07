@@ -29,7 +29,7 @@ file=${1-}
 
 [[ -n $cmdfile ]] || {
   print -u2 "error: no @emacs_openfile_cmdfile set for this tmux window"
-  print -u2 "hint: load tmux.el and run M-x tmux-openfile-enable, then create a tty emacsclient frame"
+  print -u2 "hint: load tmux-openfile.el and run M-x tmux-openfile-enable, then create a tty emacsclient frame"
   exit 1
 }
 
@@ -40,3 +40,7 @@ file=${1-}
 
 # In-place update (no temp+rename) so Emacs file-notify watches keep working.
 print -r -- "$file" >| "$cmdfile"
+
+# Move focus to the Emacs pane.
+paneid=$(tmux show-options -w -qv @emacs_openfile_paneid || true)
+[[ -n $paneid ]] && tmux select-pane -t "$paneid"
