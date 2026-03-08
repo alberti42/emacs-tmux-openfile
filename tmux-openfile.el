@@ -1,4 +1,4 @@
-;;; tmux-openfile.el --- Emacs <-> tmux open-file bridge -*- lexical-binding: t; -*-
+;;; tmux-openfile.el --- Emacs <-> tmux openfile bridge -*- lexical-binding: t; -*-
 
 ;; Overview
 ;; --------
@@ -305,7 +305,7 @@ if this pane is already registered."
 
 ;;;###autoload
 (defun tmux-openfile-enable ()
-  "Enable the tmux open-file bridge for tty Emacs frames.
+  "Enable the tmux openfile bridge for tty Emacs frames.
 Registers the current frame immediately (for regular non-daemon sessions),
 and installs hooks so that every subsequent tty frame is automatically
 registered and every closed frame is automatically deregistered."
@@ -321,10 +321,14 @@ registered and every closed frame is automatically deregistered."
 
 ;;;###autoload
 (defun tmux-openfile-disable ()
-  "Disable the tmux open-file bridge.
-Removes all hooks and deregisters every active session: stack entries are
-removed from @emacs_openfile_stack, filenotify watches are cancelled, and
-cmdfiles are deleted from disk."
+  "Disable the tmux openfile bridge.
+Removes all hooks and fully deregisters every session owned by this Emacs
+process: stack entries are removed from @emacs_openfile_stack, filenotify
+watches are cancelled, and cmdfiles are deleted from disk.
+
+In a regular Emacs session this affects only the current session.
+In a daemon session (emacs --daemon + emacsclient) this deregisters all
+connected client frames across all tmux windows."
   (interactive)
   (remove-hook 'server-after-make-frame-hook #'tmux-openfile--register-frame)
   (remove-hook 'delete-frame-functions #'tmux-openfile--deregister-frame)
