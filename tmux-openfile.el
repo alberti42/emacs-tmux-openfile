@@ -1,5 +1,11 @@
 ;;; tmux-openfile.el --- Emacs <-> tmux openfile bridge -*- lexical-binding: t; -*-
 
+;; Author: Andrea Alberti <a.alberti82@gmail.com>
+;; URL: https://github.com/alberti42/emacs-tmux-openfile
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "29.1"))
+;; Keywords: tools, terminals
+
 ;; Overview
 ;; --------
 ;; Lets shell tools ask a running Emacs to open a file by writing a file-spec
