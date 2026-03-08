@@ -85,28 +85,40 @@ The real implementation is sourced on the first call and the stub replaces
 itself, so there is no measurable startup cost and no `PATH` changes are
 needed.
 
-**zsh** — source the plugin from `.zshrc`, or point any plugin manager at
-the repository root:
+##### zsh
+
+**Manual**
 
 ```zsh
 # .zshrc — manual
 source /path/to/emacs-tmux-tandem/emacs-tmux-tandem.plugin.zsh
 ```
 
-```zsh
-# zinit
-zinit light your-github-user/emacs-tmux-tandem
+**Zinit**
 
-# oh-my-zsh (clone into custom plugins directory)
+```zsh
+# Import emacs-tmux-tandem
+zinit lucid wait depth=1 from'gh-r' compile'**/*.zsh' \
+      id-as'tmux-plugins/emacs-tmux-tandem' bpick'et-zsh-*' \
+      atinit:'export ET_TANDEM_CMD_NAME=et' for @alberti42/emacs-tmux-tandem
+```
+
+**oh-my-zsh** (clone into custom plugins directory)
+
+```zsh
 # plugins=(... emacs-tmux-tandem)
 ```
 
-**bash** — source the plugin from `.bashrc`:
+##### bash
+
+Source the plugin from `.bashrc`:
 
 ```bash
 # .bashrc
 source /path/to/emacs-tmux-tandem/emacs-tmux-tandem.plugin.bash
 ```
+
+##### Plugin configuration
 
 <details>
 <summary>Renaming the command</summary>
