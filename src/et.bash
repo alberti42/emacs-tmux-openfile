@@ -15,6 +15,7 @@ __emacs-tmux-openfile._usage() {
   printf '%s\n' "${cmd} — open a file in a running Emacs session from within the current tmux window" >&$fd
   printf '%s\n' "" >&$fd
   printf '%s\n' "usage: ${cmd} [-k] FILE" >&$fd
+  printf '%s\n' "       ${cmd}" >&$fd
   printf '%s\n' "       ${cmd} --cmdfile" >&$fd
   printf '%s\n' "       ${cmd} --list" >&$fd
   printf '%s\n' "" >&$fd
@@ -64,8 +65,25 @@ __emacs-tmux-openfile.et() {
 
   local file=${1-}
   if [[ -z $file ]]; then
-    __emacs-tmux-openfile._usage "$cmd" 2
-    return 2
+    if [[ $keep_focus -eq 1 ]]; then
+      __emacs-tmux-openfile._usage "$cmd" 2
+      return 2
+    fi
+    # Focus-only: jump to the Emacs pane without opening a file.
+    [[ -n $cmdfile ]] || {
+      printf '%s\n' "${cmd}: error: no Emacs session registered in this tmux window" >&2
+      printf '%s\n' "${cmd}: hint: load tmux-openfile.el and run M-x tmux-openfile-enable" >&2
+      return 1
+    }
+    local active_cmd
+    active_cmd=$(command tmux display-message -t "$paneid" -p '#{pane_current_command}' 2>/dev/null || true)
+    [[ $active_cmd == emacs* ]] || {
+      printf '%s\n' "${cmd}: error: pane $paneid is no longer running Emacs (found: ${active_cmd:-nothing})" >&2
+      printf '%s\n' "${cmd}: hint: run '${cmd} --list' to see all panes in this tmux window" >&2
+      return 1
+    }
+    command tmux select-pane -t "$paneid"
+    return 0
   fi
 
   [[ -n $cmdfile ]] || {
