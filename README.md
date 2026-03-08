@@ -4,6 +4,7 @@ Open files in a running Emacs session from anywhere inside tmux — a single
 shell command sends a file to Emacs and moves focus there instantly.
 
 ```zsh
+et                     # focus jumps to Emacs (no file opened)
 et src/main.c          # open file, focus jumps to Emacs
 et +42 src/main.c      # open at line 42
 et +42:7 src/main.c    # open at line 42, column 7
@@ -16,12 +17,12 @@ When Emacs starts inside a tmux window, it registers itself by:
 
 1. Creating a small IPC file under `$XDG_CACHE_HOME/emacs/tmux-openfile/`.
 2. Storing the path to that file in a tmux window variable
-   (`@emacs_openfile_cmdfile`) so that any shell in the same window can find it.
+   (`@emacs_openfile_stack`) so that any shell in the same window can find it.
 3. Watching the IPC file with Emacs's built-in `filenotify`.
 
 When you run `et FILE`, the script reads the window variable, writes the
 file path into the IPC file, and Emacs opens it immediately. When the Emacs
-frame is closed the window variables are unset, so `et` reports a clear
+frame is closed the window variable is unset, so `et` reports a clear
 error if no session is registered.
 
 Works with both session types:
@@ -142,6 +143,7 @@ ln -s /path/to/emacs-tmux-openfile/src/et.bash ~/.local/bin/et
 
 ```
 et [-k] FILE
+et
 et --cmdfile
 et --list
 ```
@@ -149,6 +151,7 @@ et --list
 | Argument / Option    | Description                                                   |
 | -------------------- | ------------------------------------------------------------- |
 | `FILE`               | File to open. Accepts a plain path or `+LINE[:COL] path`.     |
+| *(no arguments)*     | Switch focus to the Emacs pane without opening a file.        |
 | `-k`, `--keep-focus` | Open the file but do not move focus to the Emacs pane.        |
 | `--cmdfile`          | Print the IPC file path for the current tmux window and exit. |
 | `--list`             | List all tmux panes with their index, id, command, and tty.   |
@@ -166,11 +169,11 @@ et --list
 After starting Emacs in a TTY inside tmux, check that registration succeeded:
 
 ```zsh
-tmux show -w @emacs_openfile_cmdfile   # should print the IPC file path
-tmux show -w @emacs_openfile_paneid    # should print the Emacs pane ID
+tmux show -w @emacs_openfile_stack   # should print the ordered session list
+et --cmdfile                         # should print the active IPC file path
 ```
 
-If the variables are empty, confirm that `tmux` was found by Emacs at startup:
+If the variable is empty, confirm that `tmux` was found by Emacs at startup:
 
 ```
 M-: tmux-openfile--executable
@@ -181,12 +184,11 @@ M-: tmux-openfile--executable
 All options belong to the `tmux-openfile` customize group (`M-x customize-group
 tmux-openfile`).
 
-| Variable                     | Default                   | Description                                               |
-| ---------------------------- | ------------------------- | --------------------------------------------------------- |
-| `tmux-openfile-tmux-option`  | `@emacs_openfile_cmdfile` | tmux window option that stores the IPC file path          |
-| `tmux-openfile-pane-option`  | `@emacs_openfile_paneid`  | tmux window option that stores the Emacs pane ID          |
-| `tmux-openfile-cache-subdir` | `tmux-openfile`           | Subdirectory under `$XDG_CACHE_HOME/emacs/` for IPC files |
-| `tmux-openfile-watch-events` | `(change)`                | filenotify events that trigger file opening               |
+| Variable                      | Default                  | Description                                               |
+| ----------------------------- | ------------------------ | --------------------------------------------------------- |
+| `tmux-openfile-stack-option`  | `@emacs_openfile_stack`  | tmux window option that stores the ordered session list   |
+| `tmux-openfile-cache-subdir`  | `tmux-openfile`          | Subdirectory under `$XDG_CACHE_HOME/emacs/` for IPC files |
+| `tmux-openfile-watch-events`  | `(change)`               | filenotify events that trigger file opening               |
 
 ## License
 
