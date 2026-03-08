@@ -137,7 +137,7 @@ __emacs-tmux-tandem.et() {
   }
 
   # In-place update (no temp+rename) so Emacs file-notify watches keep working.
-  printf '%s\n' "$file" >| "$cmdfile"
+  printf '%s' "$file" >| "$cmdfile"
 
   # Move focus to the Emacs pane (unless --keep-focus was given).
   if [[ $keep_focus -eq 0 ]]; then
